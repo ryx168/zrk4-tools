@@ -24,8 +24,9 @@ import urllib.request
 
 OUT = sys.argv[1]
 BASE = sys.argv[2].rstrip('/')
-TOKEN = os.environ['UPLOAD_TOKEN']
+TOKEN = os.environ.get('UPLOAD_TOKEN', '')
 PREFIX = os.environ.get('MAIL_PREFIX', 'jimmyloong').strip('/') + '/'
+LOCAL = os.environ.get('MAIL_PREFIX', 'jimmyloong').strip('/')
 MANIFEST = os.path.join(OUT, 'uploaded.json')
 # This runner never holds the mailbox's full history locally (seeded from
 # current UIDs forward, nothing older fetched - see seed.py), so a local
@@ -34,7 +35,20 @@ MANIFEST = os.path.join(OUT, 'uploaded.json')
 # primary puller maintains from its own full local copy - exactly backwards
 # for a job whose point is to help during an outage, not blank the archive
 # the moment it runs. Message content stays fully additive either way.
+# NOT set for mailboxes that have no other sync path (the 9 new ones) -
+# there, this bridge IS the whole history, so its index is already complete.
 SKIP_INDEX = os.environ.get('SKIP_INDEX') == '1'
+
+# Opt-in: push everything (messages, index, status) to Google Drive instead
+# of R2 - same flag fetch.py uses for attachments, so one mailbox is either
+# fully on Drive or fully on R2, never a mix.
+ALL_TO_DRIVE = os.environ.get('ATTACHMENTS_TO_DRIVE') == '1'
+_drive = None
+if ALL_TO_DRIVE:
+    import drive_upload
+    _drive = drive_upload.from_env()
+    if _drive is None:
+        print('  ATTACHMENTS_TO_DRIVE=1 but GOOGLE_* credentials are missing', file=sys.stderr)
 
 
 def upload(key, data, ctype='application/json'):
@@ -82,7 +96,19 @@ def main():
             if manifest.get(rel) == digest:
                 unchanged += 1
                 continue
-            if upload(PREFIX + rel, data):
+            ok = False
+            if ALL_TO_DRIVE and _drive is not None:
+                try:
+                    # Flat filename - a message JSON never changes once
+                    # written, so dedup-by-name (upload(), not upsert()) is
+                    # correct and matches how attachments already behave.
+                    _drive.upload(LOCAL, name, data, 'application/json')
+                    ok = True
+                except Exception as exc:
+                    print('  DRIVE UPLOAD FAILED %s: %s' % (rel, exc), file=sys.stderr)
+            else:
+                ok = upload(PREFIX + rel, data)
+            if ok:
                 manifest[rel] = digest
                 sent += 1
             else:
@@ -99,7 +125,15 @@ def main():
         pass
     elif os.path.exists(idx):
         with open(idx, 'rb') as fh:
-            idx_ok = upload(PREFIX + 'search-index.json', fh.read())
+            idx_data = fh.read()
+        if ALL_TO_DRIVE and _drive is not None:
+            try:
+                _drive.upsert(LOCAL, 'search-index.json', idx_data, 'application/json')
+                idx_ok = True
+            except Exception as exc:
+                print('  DRIVE INDEX UPLOAD FAILED: %s' % exc, file=sys.stderr)
+        else:
+            idx_ok = upload(PREFIX + 'search-index.json', idx_data)
 
     status = {
         'last_sync': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -109,7 +143,14 @@ def main():
         'index_uploaded': idx_ok,
         'index_skipped': SKIP_INDEX,
     }
-    upload(PREFIX + 'sync-status.json', json.dumps(status).encode('utf-8'))
+    status_data = json.dumps(status).encode('utf-8')
+    if ALL_TO_DRIVE and _drive is not None:
+        try:
+            _drive.upsert(LOCAL, 'sync-status.json', status_data, 'application/json')
+        except Exception as exc:
+            print('  DRIVE STATUS UPLOAD FAILED: %s' % exc, file=sys.stderr)
+    else:
+        upload(PREFIX + 'sync-status.json', status_data)
 
     print('  json: sent %d, unchanged %d, failed %d, index %s'
           % (sent, unchanged, failed,

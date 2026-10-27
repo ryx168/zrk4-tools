@@ -49,6 +49,18 @@ ACCOUNT_ID = os.environ.get('ACCOUNT_ID', 'it_xotours')
 PREFIX = os.environ.get('MAIL_PREFIX', 'jimmyloong').strip('/')
 ATT_PREFIX = PREFIX + '/attachments/'
 MAX_ATTACHMENT = int(os.environ.get('MAX_ATTACHMENT_SIZE', 500 * 1024))
+# Opt-in only - jimmyloong/ramin/etc. keep uploading attachments to R2
+# unchanged. See drive_upload.py for why this exists and the dedup it does
+# that ramin's original migration script skipped (97 duplicate uploads).
+ATTACHMENTS_TO_DRIVE = os.environ.get('ATTACHMENTS_TO_DRIVE') == '1'
+_drive = None
+_drive_map = {}
+_drive_map_path = None
+if ATTACHMENTS_TO_DRIVE:
+    import drive_upload
+    _drive = drive_upload.from_env()
+    if _drive is None:
+        print('  ATTACHMENTS_TO_DRIVE=1 but GOOGLE_* credentials are missing', file=sys.stderr)
 IMAP_HOST = os.environ.get('IMAP_HOST', '64.188.31.56')
 IMAP_PORT = int(os.environ.get('IMAP_PORT', '993'))
 MASTER_USER = os.environ.get('IMAP_MASTER_USER', 'hubmaster')
@@ -259,7 +271,17 @@ def process_message(raw_bytes, flags, folder_label, out_counts):
                 safe = sanitize(raw_name)
                 objname = '%s-%s' % (eid, safe)
                 ct = CTYPES.get(safe.split('.')[-1].lower(), ctype or 'application/octet-stream')
-                if upload(ATT_PREFIX + objname, data, ct):
+                if ATTACHMENTS_TO_DRIVE and _drive is not None:
+                    try:
+                        file_id = _drive.upload(PREFIX, objname, data, ct)
+                        _drive_map[objname] = file_id
+                        entry['url'] = '/attachments/' + objname
+                        entry['synced'] = True
+                        out_counts['attachments'] += 1
+                    except Exception as exc:
+                        print('  DRIVE UPLOAD FAILED %s: %s' % (objname, exc), file=sys.stderr)
+                        out_counts['att_failed'] += 1
+                elif upload(ATT_PREFIX + objname, data, ct):
                     entry['url'] = '/attachments/' + objname
                     entry['synced'] = True
                     out_counts['attachments'] += 1
@@ -365,6 +387,15 @@ def main():
     os.makedirs(OUT, exist_ok=True)
     state = load_state()
 
+    global _drive_map, _drive_map_path
+    if ATTACHMENTS_TO_DRIVE:
+        _drive_map_path = os.path.join(OUT, 'gdrive-map.json')
+        try:
+            with open(_drive_map_path, encoding='utf-8') as fh:
+                _drive_map = json.load(fh)
+        except Exception:
+            _drive_map = {}
+
     ctx = ssl.create_default_context()
     # These are internal hostnames/IPs on the mail mesh with per-host certs
     # that do not match the address dialled; the transport is already inside
@@ -436,6 +467,16 @@ def main():
         save_state(state)
 
     imap.logout()
+
+    if ATTACHMENTS_TO_DRIVE and _drive_map_path and counts['attachments']:
+        with open(_drive_map_path, 'w', encoding='utf-8') as fh:
+            json.dump(_drive_map, fh)
+        # Pushed as its own object, same as every other synced object - the
+        # [[path]].js resolver reads this key fresh on every request rather
+        # than from a bundled import, so new attachments need no redeploy.
+        if not upload(PREFIX + '/gdrive-map.json', json.dumps(_drive_map).encode('utf-8')):
+            print('  WARNING: gdrive-map.json push failed, new attachments will 404 until next run', file=sys.stderr)
+
     total = rebuild_index()
     print('  pulled %d new, %d attachments (%d failed), %d messages failed, index %d'
           % (counts['new'], counts['attachments'], counts['att_failed'], counts['failed'], total))
