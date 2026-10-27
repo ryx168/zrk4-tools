@@ -35,6 +35,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
 
       - name: Save state
@@ -66,6 +67,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE_1 }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN_1 }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
       - name: Save state
         if: always()
@@ -96,6 +98,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE_2 }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN_2 }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
       - name: Save state
         if: always()
@@ -126,6 +129,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE_3 }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN_3 }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
       - name: Save state
         if: always()
@@ -156,6 +160,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE_4 }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN_4 }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
       - name: Save state
         if: always()
@@ -186,6 +191,7 @@ jobs:
           DEST_BASE: ${{ secrets.DEST_BASE_5 }}
           AUTH_TOKEN: ${{ secrets.AUTH_TOKEN_5 }}
           MASTER_PASS: ${{ secrets.MASTER_PASS }}
+          SKIP_INDEX: '1'
         run: bash run.sh
       - name: Save state
         if: always()

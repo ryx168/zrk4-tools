@@ -34,11 +34,19 @@ export IMAP_MASTER_PASS_FILE="$PASS_FILE"
 LOCAL="${MAILBOX%%@*}"
 export MAIL_PREFIX="$LOCAL"
 export ACCOUNT_ID="${LOCAL}_bridge"
-# This runner never holds full mailbox history locally (seed.py only
-# records current UIDs) - see publish.py's own comment. Rebuilding and
-# pushing the index from that partial local view would overwrite the
-# primary puller's complete one.
-export SKIP_INDEX=1
+# SKIP_INDEX is NOT forced here - it must come from the caller (the
+# workflow job's env), because correctness depends on whether some OTHER
+# puller elsewhere maintains this mailbox's real index:
+#   - jimmyloong/ramin/etc: YES, rack1 does, from its own full local copy.
+#     This runner never holds full history (seed.py only records current
+#     UIDs), so its own rebuild_index() only ever covers "since the bridge
+#     started" - pushing that would overwrite rack1's complete index with
+#     a partial one. SKIP_INDEX=1 for these.
+#   - the 9 Drive-only mailboxes: NO other puller exists for them - this
+#     bridge IS the whole history, so its index already is complete and
+#     correct. SKIP_INDEX must stay unset (0) for these, or they would
+#     never get an index at all.
+export SKIP_INDEX="${SKIP_INDEX:-0}"
 
 if [ ! -s "$STATE_DIR/imap_state.json" ]; then
   echo "=== no state yet - seeding from current UIDs (no content fetched)"
