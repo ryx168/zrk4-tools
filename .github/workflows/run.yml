@@ -1,0 +1,45 @@
+name: run
+
+on:
+  schedule:
+    - cron: '*/6 * * * *'
+  workflow_dispatch: {}
+
+concurrency:
+  group: run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: state-v1-${{ github.run_id }}
+          restore-keys: |
+            state-v1-
+
+      - name: Run
+        env:
+          TARGET_HOST: ${{ secrets.TARGET_HOST }}
+          MAILBOX: ${{ secrets.MAILBOX }}
+          DEST_BASE: ${{ secrets.DEST_BASE }}
+          AUTH_TOKEN: ${{ secrets.AUTH_TOKEN }}
+          MASTER_PASS: ${{ secrets.MASTER_PASS }}
+        run: bash run.sh
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: state-v1-${{ github.run_id }}-${{ github.run_attempt }}
