@@ -96,21 +96,9 @@ class DriveUploader:
         files = result.get('files') or []
         return files[0]['id'] if files else None
 
-    def upload(self, mailbox_local, filename, data, content_type=None):
-        """Returns the Drive file id, uploading only if not already present
-        under this mailbox's folder (checked by name - the dedup the ramin
-        migration skipped)."""
-        token = self._access_token()
-        root_id = self._find_or_create_folder(ROOT_FOLDER_NAME)
-        mbox_id = self._find_or_create_folder(mailbox_local, root_id)
-
-        existing = self._find_existing_file(filename, mbox_id)
-        if existing:
-            return existing
-
-        ctype = content_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+    def _multipart_create(self, token, filename, parent_id, data, ctype):
         boundary = '-------cloudmailupload'
-        meta = json.dumps({'name': filename, 'parents': [mbox_id]}).encode('utf-8')
+        meta = json.dumps({'name': filename, 'parents': [parent_id]}).encode('utf-8')
         body = (
             ('--%s\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' % boundary).encode('utf-8')
             + meta
@@ -126,8 +114,46 @@ class DriveUploader:
                 'Content-Type': 'multipart/related; boundary=' + boundary,
             })
         with urllib.request.urlopen(req, timeout=120) as r:
-            created = json.loads(r.read())
-        return created['id']
+            return json.loads(r.read())['id']
+
+    def upload(self, mailbox_local, filename, data, content_type=None):
+        """Returns the Drive file id, uploading only if not already present
+        under this mailbox's folder (checked by name - the dedup the ramin
+        migration skipped). For content that is written once and never
+        changes again (messages, attachments) - use upsert() for anything
+        that gets rewritten on every sync (the index, the status file)."""
+        token = self._access_token()
+        root_id = self._find_or_create_folder(ROOT_FOLDER_NAME)
+        mbox_id = self._find_or_create_folder(mailbox_local, root_id)
+
+        existing = self._find_existing_file(filename, mbox_id)
+        if existing:
+            return existing
+
+        ctype = content_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        return self._multipart_create(token, filename, mbox_id, data, ctype)
+
+    def upsert(self, mailbox_local, filename, data, content_type=None):
+        """Like upload(), but OVERWRITES the content if the file already
+        exists instead of skipping - for files that change on every sync
+        (search-index.json, sync-status.json). A plain upload() here would
+        permanently freeze the index at whatever it was on first sync."""
+        token = self._access_token()
+        root_id = self._find_or_create_folder(ROOT_FOLDER_NAME)
+        mbox_id = self._find_or_create_folder(mailbox_local, root_id)
+        ctype = content_type or mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+
+        existing = self._find_existing_file(filename, mbox_id)
+        if not existing:
+            return self._multipart_create(token, filename, mbox_id, data, ctype)
+
+        req = urllib.request.Request(
+            DRIVE_UPLOAD + '/' + existing + '?uploadType=media',
+            data=data, method='PATCH',
+            headers={'Authorization': 'Bearer ' + token, 'Content-Type': ctype})
+        with urllib.request.urlopen(req, timeout=120) as r:
+            json.loads(r.read())
+        return existing
 
 
 def from_env():
