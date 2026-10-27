@@ -34,6 +34,11 @@ export IMAP_MASTER_PASS_FILE="$PASS_FILE"
 LOCAL="${MAILBOX%%@*}"
 export MAIL_PREFIX="$LOCAL"
 export ACCOUNT_ID="${LOCAL}_bridge"
+# This runner never holds full mailbox history locally (seed.py only
+# records current UIDs) - see publish.py's own comment. Rebuilding and
+# pushing the index from that partial local view would overwrite the
+# primary puller's complete one.
+export SKIP_INDEX=1
 
 if [ ! -s "$STATE_DIR/imap_state.json" ]; then
   echo "=== no state yet - seeding from current UIDs (no content fetched)"

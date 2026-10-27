@@ -27,6 +27,14 @@ BASE = sys.argv[2].rstrip('/')
 TOKEN = os.environ['UPLOAD_TOKEN']
 PREFIX = os.environ.get('MAIL_PREFIX', 'jimmyloong').strip('/') + '/'
 MANIFEST = os.path.join(OUT, 'uploaded.json')
+# This runner never holds the mailbox's full history locally (seeded from
+# current UIDs forward, nothing older fetched - see seed.py), so a local
+# rebuild_index() here only ever covers "since the bridge started", not the
+# real mailbox. Uploading that would overwrite the complete index the
+# primary puller maintains from its own full local copy - exactly backwards
+# for a job whose point is to help during an outage, not blank the archive
+# the moment it runs. Message content stays fully additive either way.
+SKIP_INDEX = os.environ.get('SKIP_INDEX') == '1'
 
 
 def upload(key, data, ctype='application/json'):
@@ -87,7 +95,9 @@ def main():
 
     idx = os.path.join(OUT, 'search-index.json')
     idx_ok = False
-    if os.path.exists(idx):
+    if SKIP_INDEX:
+        pass
+    elif os.path.exists(idx):
         with open(idx, 'rb') as fh:
             idx_ok = upload(PREFIX + 'search-index.json', fh.read())
 
@@ -97,12 +107,14 @@ def main():
         'messages_unchanged': unchanged,
         'messages_failed': failed,
         'index_uploaded': idx_ok,
+        'index_skipped': SKIP_INDEX,
     }
     upload(PREFIX + 'sync-status.json', json.dumps(status).encode('utf-8'))
 
     print('  json: sent %d, unchanged %d, failed %d, index %s'
-          % (sent, unchanged, failed, 'ok' if idx_ok else 'FAILED'))
-    return 0 if failed == 0 and idx_ok else 1
+          % (sent, unchanged, failed,
+             'skipped' if SKIP_INDEX else ('ok' if idx_ok else 'FAILED')))
+    return 0 if failed == 0 and (idx_ok or SKIP_INDEX) else 1
 
 
 if __name__ == '__main__':
